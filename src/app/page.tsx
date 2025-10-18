@@ -1,103 +1,175 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+
+type UserProfile = {
+  meds: string[];
+  allergies: string[];
+  goals: string[];
+};
+
+type ParsedReceipt = {
+  store: string;
+  purchasedAt?: string;
+  subtotal?: number;
+  tax?: number;
+  total?: number;
+  items: { rawName: string; qty?: number; unitPrice?: number; normalized?: string }[];
+};
+
+type RedFlag = {
+  severity: "info" | "warn" | "danger";
+  reason: string;
+  evidence?: string[];
+  recommendation?: string;
+};
+
+type AnalysisResult = {
+  redFlags: RedFlag[];
+  budgetSwaps: { from: string; to: string; why: string; estSavings?: string }[];
+  mealPlan: { title: string; meals: { name: string; uses: string[]; steps?: string[] }[] };
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [file, setFile] = useState<File | null>(null);
+  const [profile, setProfile] = useState<UserProfile>({
+    meds: [],
+    allergies: [],
+    goals: ["high-protein"],
+  });
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [loading, setLoading] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+  async function handleIngest() {
+    if (!file) return;
+    setLoading(true);
+
+    // mock analysis for now — this will be replaced with API calls later
+    const mockAnalysis: AnalysisResult = {
+      redFlags: [
+        {
+          severity: "warn",
+          reason: "‘Grapefruit juice’ may interact with atorvastatin.",
+          recommendation: "Avoid grapefruit or consult your doctor.",
+        },
+        {
+          severity: "danger",
+          reason: "Possible peanut allergen found in ‘Trail Mix’",
+          recommendation: "Choose a peanut-free snack alternative.",
+        },
+      ],
+      budgetSwaps: [
+        {
+          from: "Organic Spinach",
+          to: "Conventional Spinach",
+          why: "Similar nutrition at lower cost",
+          estSavings: "~15%",
+        },
+      ],
+      mealPlan: {
+        title: "3-Day Smart Meal Plan",
+        meals: [
+          { name: "Greek Yogurt Parfait", uses: ["Chobani Yogurt", "Berries", "Oats"] },
+          { name: "Spinach Chicken Bowl", uses: ["Spinach", "Brown Rice", "Rotisserie Chicken"] },
+        ],
+      },
+    };
+
+    // simulate delay
+    await new Promise((res) => setTimeout(res, 1000));
+
+    setAnalysis(mockAnalysis);
+    setLoading(false);
+  }
+
+  return (
+    <main className="mx-auto max-w-3xl p-6 space-y-6">
+      <h1 className="text-3xl font-bold">Receipt→Relief</h1>
+      <p className="text-sm opacity-70">
+        Upload a grocery or restaurant receipt → get red flags, swaps, and meal plan ideas.
+      </p>
+
+      {/* upload section */}
+      <section className="grid gap-4 rounded-2xl border p-4">
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+        <textarea
+          className="w-full rounded-md border p-2 text-sm"
+          placeholder='Enter your profile (JSON). Example: {"meds":["atorvastatin"],"allergies":["peanut"],"goals":["low-sodium"]}'
+          onBlur={(e) => {
+            try {
+              setProfile(JSON.parse(e.target.value));
+            } catch {}
+          }}
+        />
+        <button
+          onClick={handleIngest}
+          className="rounded-xl bg-black px-4 py-2 text-white disabled:opacity-50"
+          disabled={!file || loading}
         >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+          {loading ? "Analyzing…" : "Analyze Receipt"}
+        </button>
+        <p className="text-xs text-gray-500">
+          Not medical advice. For educational purposes only.
+        </p>
+      </section>
+
+      {/* results */}
+      {analysis && (
+        <section className="grid gap-6">
+          {/* red flags */}
+          <div className="rounded-2xl border p-4">
+            <h2 className="font-semibold">Red Flags</h2>
+            <ul className="mt-2 space-y-2">
+              {analysis.redFlags.map((f, i) => (
+                <li
+                  key={i}
+                  className={`rounded-lg border p-3 ${
+                    f.severity === "danger" ? "border-red-500" : "border-yellow-400"
+                  }`}
+                >
+                  <div className="font-medium">{f.reason}</div>
+                  {f.recommendation && (
+                    <div className="text-sm opacity-80">{f.recommendation}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* budget swaps */}
+          <div className="rounded-2xl border p-4">
+            <h2 className="font-semibold">Budget-Friendly Swaps</h2>
+            <ul className="mt-2 list-disc pl-5">
+              {analysis.budgetSwaps.map((s, i) => (
+                <li key={i}>
+                  <b>{s.from}</b> → <b>{s.to}</b>{" "}
+                  <span className="opacity-70">
+                    ({s.why}
+                    {s.estSavings ? `, ${s.estSavings}` : ""})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* meal plan */}
+          <div className="rounded-2xl border p-4">
+            <h2 className="font-semibold">{analysis.mealPlan.title}</h2>
+            <ul className="mt-2 space-y-2">
+              {analysis.mealPlan.meals.map((m, i) => (
+                <li key={i} className="rounded-lg border p-3">
+                  <div className="font-medium">{m.name}</div>
+                  <div className="text-xs opacity-70">Uses: {m.uses.join(", ")}</div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
+    </main>
   );
 }
