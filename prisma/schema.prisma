@@ -1,0 +1,187 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // change to "postgresql" for prod
+  url      = env("DATABASE_URL")
+}
+
+enum TagGroup {
+  ALLERGEN // milk, egg, peanut, tree_nut, soy, wheat, fish, shellfish, sesame
+  INTERACTION // grapefruit, tyramine_rich, vitamin_k_heavy, caffeine, alcohol, licorice, high_sodium
+  HEALTH // ultra_processed, added_sugar, high_fiber, whole_grain
+}
+
+model User {
+  id          String  @id @default(cuid())
+  email       String  @unique
+  displayName String?
+
+  // store arrays in JSON for SQLite
+  allergies   Json? // e.g. ["peanut","wheat"]
+  medications Json? // e.g. ["atorvastatin"]
+  goals       Json? // e.g. ["high_fiber","budget"]
+
+  receipts      Receipt[]
+  plans         Plan[]
+  uploads       Upload[]
+  subscriptions NewsletterSubscription?
+  snapshots     MonthlySnapshot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Upload {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  kind       String
+  storageKey String
+  bytes      Int?
+  mimeType   String?
+  width      Int?
+  height     Int?
+  createdAt  DateTime @default(now())
+
+  // NEW: back relation for Receipt.upload
+  receipts Receipt[]
+}
+
+model Receipt {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  uploadId String?
+  upload   Upload? @relation(fields: [uploadId], references: [id])
+
+  merchant      String?
+  merchantLogo  String?
+  purchasedAt   DateTime?
+  subtotalCents Int?
+  taxCents      Int?
+  totalCents    Int?
+
+  ocrRaw        Json?
+  items         ReceiptItem[]
+  safetyReports SafetyReport[]
+
+  // NEW: back relation for Plan.receipt
+  plans Plan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model ReceiptItem {
+  id        String  @id @default(cuid())
+  receiptId String
+  receipt   Receipt @relation(fields: [receiptId], references: [id])
+
+  // OCR fields
+  rawText        String
+  quantity       Float? // OCR’d quantity
+  unitPriceCents Int?
+  lineTotalCents Int?
+
+  // normalized
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([receiptId])
+  @@index([productId])
+}
+
+model Product {
+  id       String  @id @default(cuid())
+  brand    String?
+  name     String // e.g., "Grapefruit Juice 1.75L"
+  foodType String? // normalized type, e.g., "grapefruit juice"
+  upc      String? @unique
+  // light source-of-truth you can enrich later
+
+  tags      ProductTag[]
+  items     ReceiptItem[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([foodType])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g., "peanut", "grapefruit", "ultra_processed"
+  label     String
+  group     TagGroup
+  createdAt DateTime @default(now())
+
+  products ProductTag[]
+
+  @@index([group])
+}
+
+model ProductTag {
+  productId String
+  tagId     String
+  product   Product @relation(fields: [productId], references: [id])
+  tag       Tag     @relation(fields: [tagId], references: [id])
+
+  @@id([productId, tagId])
+  @@index([tagId])
+}
+
+model SafetyReport {
+  id        String  @id @default(cuid())
+  receiptId String
+  receipt   Receipt @relation(fields: [receiptId], references: [id])
+
+  model     String // which model/run
+  version   String? // prompt/version hash
+  // A-OK to store structured results for rendering
+  result    Json // { redFlags:[...], interactions:[...], allergens:[...], swaps:[...], notes:[...]}
+  createdAt DateTime @default(now())
+
+  @@index([receiptId, createdAt])
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  receiptId String? // optional: plan tied to a particular receipt
+  receipt   Receipt? @relation(fields: [receiptId], references: [id])
+
+  // this is strictly structured UI data (no freeform blobs)
+  data      Json // {meals:[{title,steps,uses:[productId],...}], shoppingSwaps:[...]}
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model NewsletterSubscription {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  isActive  Boolean  @default(true)
+  cadence   String   @default("monthly") // keep simple
+  createdAt DateTime @default(now())
+}
+
+model MonthlySnapshot {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  monthKey  String // "2025-10"
+  summary   Json // {spend, redFlagsCount, topAllergens, topInteractions, suggestions}
+  createdAt DateTime @default(now())
+
+  @@unique([userId, monthKey])
+}
