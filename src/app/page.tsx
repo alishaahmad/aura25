@@ -10,8 +10,12 @@ type UserProfile = {
 };
 
 type AnalysisResult = {
-  redFlags: { severity: "info" | "warn" | "danger"; reason: string; recommendation?: string }[];
-  budgetSwaps: { from: string; to: string; why: string; estSavings?: string }[];
+  redFlags: {
+    severity: "info" | "warn" | "danger";
+    reason: string;
+    recommendation?: string;
+  }[];
+  healthySwaps: { from: string; to: string; why: string; estSavings?: string }[];
   mealPlan: { title: string; meals: { name: string; uses: string[] }[] };
   ocr_preview?: string;
   macros?: {
@@ -76,17 +80,20 @@ export default function Home() {
 
       // The server already normalized the structure
       const server = dataJson.analysis || {};
+
+      // Prefer server.healthy_swaps, but fall back to server.budget_swaps for compatibility
+      const swapsRaw: string[] = server.healthy_swaps ?? server.budget_swaps ?? [];
+
       const finalResult: AnalysisResult = {
         redFlags: (server.red_flags || []).map((r: any) => ({
           severity: "danger",
           reason: r.title,
           recommendation: r.detail,
         })),
-        budgetSwaps: (server.budget_swaps || []).map((s: string) => ({
-          from: s.split("→")[0]?.trim() || s,
-          to: s.split("→")[1]?.trim() || "",
-          why: "",
-        })),
+        healthySwaps: swapsRaw.map((s: string) => {
+          const [from, to] = s.split("→").map((x) => x?.trim());
+          return { from: from || s, to: to || "", why: "" };
+        }),
         mealPlan: {
           title: "3-Day Smart Meal Plan",
           meals: (server.meal_plan || []).map((m: any) => ({
@@ -111,7 +118,8 @@ export default function Home() {
     <main className="mx-auto max-w-3xl p-6 space-y-6">
       <h1 className="text-3xl font-bold">Receipt→Relief</h1>
       <p className="text-sm opacity-70">
-        Upload a grocery or restaurant receipt → get red flags, swaps, macros, and meal plan ideas.
+        Upload a grocery or restaurant receipt → get red flags, healthy swaps, macros, and meal plan
+        ideas.
       </p>
 
       {/* Upload & Profile */}
@@ -217,11 +225,11 @@ export default function Home() {
             </div>
           )}
 
-          {/* Budget Swaps */}
+          {/* Healthy Swaps */}
           <div className="rounded-2xl border p-4">
-            <h2 className="font-semibold">Budget-Friendly Swaps</h2>
+            <h2 className="font-semibold">Healthy Swaps</h2>
             <ul className="mt-2 list-disc pl-5">
-              {analysis.budgetSwaps.map((s, i) => (
+              {analysis.healthySwaps.map((s, i) => (
                 <li key={i}>
                   <b>{s.from}</b>
                   {s.to ? (
