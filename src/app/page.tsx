@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Tesseract from "tesseract.js";
 
 type UserProfile = {
   meds: string[];
@@ -8,88 +9,112 @@ type UserProfile = {
   goals: string[];
 };
 
-type ParsedReceipt = {
-  store: string;
-  purchasedAt?: string;
-  subtotal?: number;
-  tax?: number;
-  total?: number;
-  items: { rawName: string; qty?: number; unitPrice?: number; normalized?: string }[];
-};
-
-type RedFlag = {
-  severity: "info" | "warn" | "danger";
-  reason: string;
-  evidence?: string[];
-  recommendation?: string;
-};
-
 type AnalysisResult = {
-  redFlags: RedFlag[];
+  redFlags: { severity: "info" | "warn" | "danger"; reason: string; recommendation?: string }[];
   budgetSwaps: { from: string; to: string; why: string; estSavings?: string }[];
-  mealPlan: { title: string; meals: { name: string; uses: string[]; steps?: string[] }[] };
+  mealPlan: { title: string; meals: { name: string; uses: string[] }[] };
+  ocr_preview?: string;
+  macros?: {
+    calories?: string | number;
+    protein_g?: string | number;
+    carbs_g?: string | number;
+    fat_g?: string | number;
+    fiber_g?: string | number;
+    sugar_g?: string | number;
+    sodium_mg?: string | number;
+  };
 };
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [profile, setProfile] = useState<UserProfile>({
-    meds: [],
-    allergies: [],
-    goals: ["high-protein"],
+    meds: ["atorvastatin"],
+    allergies: ["peanut"],
+    goals: ["low-sodium"],
   });
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ocrPreview, setOcrPreview] = useState<string>("");
 
   async function handleIngest() {
     if (!file) return;
     setLoading(true);
+    setError(null);
+    setAnalysis(null);
+    setOcrPreview("");
 
-    // mock analysis for now — this will be replaced with API calls later
-    const mockAnalysis: AnalysisResult = {
-      redFlags: [
-        {
-          severity: "warn",
-          reason: "‘Grapefruit juice’ may interact with atorvastatin.",
-          recommendation: "Avoid grapefruit or consult your doctor.",
-        },
-        {
+    try {
+      // 1) OCR in the browser
+      const { data } = await Tesseract.recognize(file, "eng", { logger: () => {} });
+      const text = (data?.text || "").trim();
+      if (!text) throw new Error("Could not read any text from the image.");
+      setOcrPreview(text.slice(0, 1000));
+
+      // 2) Send OCR text to backend for analysis (OpenRouter)
+      const form = new FormData();
+      form.append("text", text);
+      form.append("provider", "openrouter");
+      form.append("model", "gpt-4o-mini"); // change if you want to try others
+      form.append("profile", JSON.stringify(profile));
+
+      const res = await fetch("/api/analyze", { method: "POST", body: form });
+
+      const responseText = await res.text();
+      let dataJson: any;
+      try {
+        dataJson = JSON.parse(responseText);
+      } catch {
+        throw new Error(
+          `Server returned non-JSON (${res.status} ${res.statusText}). Body: ${responseText.slice(
+            0,
+            120
+          )}…`
+        );
+      }
+      if (!res.ok) throw new Error(dataJson.error || "Request failed");
+
+      // The server already normalized the structure
+      const server = dataJson.analysis || {};
+      const finalResult: AnalysisResult = {
+        redFlags: (server.red_flags || []).map((r: any) => ({
           severity: "danger",
-          reason: "Possible peanut allergen found in ‘Trail Mix’",
-          recommendation: "Choose a peanut-free snack alternative.",
+          reason: r.title,
+          recommendation: r.detail,
+        })),
+        budgetSwaps: (server.budget_swaps || []).map((s: string) => ({
+          from: s.split("→")[0]?.trim() || s,
+          to: s.split("→")[1]?.trim() || "",
+          why: "",
+        })),
+        mealPlan: {
+          title: "3-Day Smart Meal Plan",
+          meals: (server.meal_plan || []).map((m: any) => ({
+            name: m.name,
+            uses: m.uses || [],
+          })),
         },
-      ],
-      budgetSwaps: [
-        {
-          from: "Organic Spinach",
-          to: "Conventional Spinach",
-          why: "Similar nutrition at lower cost",
-          estSavings: "~15%",
-        },
-      ],
-      mealPlan: {
-        title: "3-Day Smart Meal Plan",
-        meals: [
-          { name: "Greek Yogurt Parfait", uses: ["Chobani Yogurt", "Berries", "Oats"] },
-          { name: "Spinach Chicken Bowl", uses: ["Spinach", "Brown Rice", "Rotisserie Chicken"] },
-        ],
-      },
-    };
+        ocr_preview: dataJson.ocr_preview,
+        macros: server.macros || {},
+      };
 
-    // simulate delay
-    await new Promise((res) => setTimeout(res, 1000));
-
-    setAnalysis(mockAnalysis);
-    setLoading(false);
+      setAnalysis(finalResult);
+    } catch (err: any) {
+      setError(err.message || "Something went wrong");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <main className="mx-auto max-w-3xl p-6 space-y-6">
       <h1 className="text-3xl font-bold">Receipt→Relief</h1>
       <p className="text-sm opacity-70">
-        Upload a grocery or restaurant receipt → get red flags, swaps, and meal plan ideas.
+        Upload a grocery or restaurant receipt → get red flags, swaps, macros, and meal plan ideas.
       </p>
 
-      {/* upload section */}
+      {/* Upload & Profile */}
       <section className="grid gap-4 rounded-2xl border p-4">
         <input
           type="file"
@@ -99,10 +124,14 @@ export default function Home() {
         <textarea
           className="w-full rounded-md border p-2 text-sm"
           placeholder='Enter your profile (JSON). Example: {"meds":["atorvastatin"],"allergies":["peanut"],"goals":["low-sodium"]}'
+          defaultValue={JSON.stringify(profile, null, 2)}
           onBlur={(e) => {
             try {
               setProfile(JSON.parse(e.target.value));
-            } catch {}
+              setError(null);
+            } catch {
+              setError("Invalid JSON format in profile");
+            }
           }}
         />
         <button
@@ -112,25 +141,29 @@ export default function Home() {
         >
           {loading ? "Analyzing…" : "Analyze Receipt"}
         </button>
-        <p className="text-xs text-gray-500">
-          Not medical advice. For educational purposes only.
-        </p>
+        <p className="text-xs text-gray-500">Not medical advice. For educational purposes only.</p>
       </section>
 
-      {/* results */}
+      {/* Errors */}
+      {error && <p className="text-red-500 text-sm">{error}</p>}
+
+      {/* OCR Preview */}
+      {ocrPreview && (
+        <div className="rounded-2xl border p-4">
+          <h2 className="font-semibold">OCR Preview</h2>
+          <pre className="whitespace-pre-wrap text-xs opacity-80">{ocrPreview}</pre>
+        </div>
+      )}
+
+      {/* Results */}
       {analysis && (
         <section className="grid gap-6">
-          {/* red flags */}
+          {/* Red Flags */}
           <div className="rounded-2xl border p-4">
             <h2 className="font-semibold">Red Flags</h2>
             <ul className="mt-2 space-y-2">
               {analysis.redFlags.map((f, i) => (
-                <li
-                  key={i}
-                  className={`rounded-lg border p-3 ${
-                    f.severity === "danger" ? "border-red-500" : "border-yellow-400"
-                  }`}
-                >
+                <li key={i} className="rounded-lg border border-red-500 p-3">
                   <div className="font-medium">{f.reason}</div>
                   {f.recommendation && (
                     <div className="text-sm opacity-80">{f.recommendation}</div>
@@ -140,23 +173,70 @@ export default function Home() {
             </ul>
           </div>
 
-          {/* budget swaps */}
+          {/* Macros */}
+          {analysis.macros && (
+            <div className="rounded-2xl border p-4">
+              <h2 className="font-semibold">Macros (estimated)</h2>
+              <ul className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                {analysis.macros.calories && (
+                  <li className="rounded-lg border p-2">
+                    <b>Calories</b>: {analysis.macros.calories}
+                  </li>
+                )}
+                {analysis.macros.protein_g && (
+                  <li className="rounded-lg border p-2">
+                    <b>Protein</b>: {analysis.macros.protein_g} g
+                  </li>
+                )}
+                {analysis.macros.carbs_g && (
+                  <li className="rounded-lg border p-2">
+                    <b>Carbs</b>: {analysis.macros.carbs_g} g
+                  </li>
+                )}
+                {analysis.macros.fat_g && (
+                  <li className="rounded-lg border p-2">
+                    <b>Fat</b>: {analysis.macros.fat_g} g
+                  </li>
+                )}
+                {analysis.macros.fiber_g && (
+                  <li className="rounded-lg border p-2">
+                    <b>Fiber</b>: {analysis.macros.fiber_g} g
+                  </li>
+                )}
+                {analysis.macros.sugar_g && (
+                  <li className="rounded-lg border p-2">
+                    <b>Sugar</b>: {analysis.macros.sugar_g} g
+                  </li>
+                )}
+                {analysis.macros.sodium_mg && (
+                  <li className="rounded-lg border p-2">
+                    <b>Sodium</b>: {analysis.macros.sodium_mg} mg
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {/* Budget Swaps */}
           <div className="rounded-2xl border p-4">
             <h2 className="font-semibold">Budget-Friendly Swaps</h2>
             <ul className="mt-2 list-disc pl-5">
               {analysis.budgetSwaps.map((s, i) => (
                 <li key={i}>
-                  <b>{s.from}</b> → <b>{s.to}</b>{" "}
-                  <span className="opacity-70">
-                    ({s.why}
-                    {s.estSavings ? `, ${s.estSavings}` : ""})
-                  </span>
+                  <b>{s.from}</b>
+                  {s.to ? (
+                    <>
+                      {" "}
+                      → <b>{s.to}</b>
+                    </>
+                  ) : null}{" "}
+                  {s.why && <span className="opacity-70">({s.why})</span>}
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* meal plan */}
+          {/* Meal Plan */}
           <div className="rounded-2xl border p-4">
             <h2 className="font-semibold">{analysis.mealPlan.title}</h2>
             <ul className="mt-2 space-y-2">
@@ -173,3 +253,5 @@ export default function Home() {
     </main>
   );
 }
+
+
